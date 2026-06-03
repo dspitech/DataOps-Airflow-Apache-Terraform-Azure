@@ -1,0 +1,450 @@
+#cloud-config
+# ============================================================
+# cloud-init FULL AUTO — TP6 DataOps
+# Ce fichier installe et démarre TOUT sans intervention humaine.
+# Terraform injecte les secrets via templatefile().
+# ============================================================
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - git
+  - curl
+  - wget
+  - unzip
+  - python3
+  - python3-pip
+  - python3-venv
+  - python3-full
+  - jq
+  - make
+  - build-essential
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - sqlite3
+  - tree
+
+write_files:
+
+  # ─────────────────────────────────────────────
+  # Fichier d'environnement global (secrets injectés par Terraform)
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/.env.global
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0600"
+    content: |
+      AZURE_STORAGE_CONNECTION_STRING="${storage_connection_string}"
+      AIRFLOW_ADMIN_PASSWORD="${airflow_admin_password}"
+
+  # ─────────────────────────────────────────────
+  # .env Airflow (Docker Compose)
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/airflow/.env
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0600"
+    content: |
+      AIRFLOW_UID=1000
+      AIRFLOW_GID=0
+      _AIRFLOW_WWW_USER_USERNAME=airflow
+      _AIRFLOW_WWW_USER_PASSWORD=${airflow_admin_password}
+      _PIP_ADDITIONAL_REQUIREMENTS=dbt-core dbt-sqlite azure-storage-blob
+
+  # ─────────────────────────────────────────────
+  # profiles.yml dbt
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/.dbt/profiles.yml
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0644"
+    content: |
+      dataops_dbt:
+        target: dev
+        outputs:
+          dev:
+            type: sqlite
+            threads: 1
+            database: dataops
+            schema: main
+            schemas_and_paths:
+              main: "/opt/airflow/project/database/dataops.db"
+            schema_directory: "/opt/airflow/project/database"
+
+  # ─────────────────────────────────────────────
+  # Script Python : upload_blob.py
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/scripts/upload_blob.py
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0755"
+    content: |
+      import os
+      import json
+      from datetime import datetime
+      from pathlib import Path
+      from azure.storage.blob import BlobServiceClient
+
+      CONTAINER_NAME = "raw"
+      DATABASE_DIR   = Path("/opt/airflow/project/database")
+
+      def get_connection_string():
+          cs = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+          if not cs:
+              raise EnvironmentError("AZURE_STORAGE_CONNECTION_STRING manquant.")
+          return cs
+
+      def upload_file():
+          cs  = get_connection_string()
+          now = datetime.utcnow()
+
+          payload = {
+              "message": f"hello azure depuis airflow - {now.isoformat()}",
+              "source": "tp6-airflow",
+              "timestamp": now.isoformat()
+          }
+
+          DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+          local_file = DATABASE_DIR / "test.json"
+          local_file.write_text(json.dumps(payload))
+
+          blob_name = (
+              f"dataops/year={now.year}/month={now.month:02d}/"
+              f"day={now.day:02d}/test_{now.strftime('%H%M%S')}.json"
+          )
+
+          client    = BlobServiceClient.from_connection_string(cs)
+          container = client.get_container_client(CONTAINER_NAME)
+
+          try:
+              container.create_container()
+              print(f"Container créé : {CONTAINER_NAME}")
+          except Exception:
+              print(f"Container existant : {CONTAINER_NAME}")
+
+          blob = client.get_blob_client(container=CONTAINER_NAME, blob=blob_name)
+          with open(local_file, "rb") as f:
+              blob.upload_blob(f, overwrite=True)
+
+          print(f"Upload réussi : {blob_name}")
+
+      if __name__ == "__main__":
+          upload_file()
+
+  # ─────────────────────────────────────────────
+  # Script Python : load_blob_to_sql.py
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/scripts/load_blob_to_sql.py
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0755"
+    content: |
+      import os
+      import json
+      import sqlite3
+      from pathlib import Path
+      from azure.storage.blob import BlobServiceClient
+
+      CONTAINER_NAME = "raw"
+      DATABASE_PATH  = Path("/opt/airflow/project/database/dataops.db")
+
+      def get_connection_string():
+          cs = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+          if not cs:
+              raise EnvironmentError("AZURE_STORAGE_CONNECTION_STRING manquant.")
+          return cs
+
+      def create_database():
+          DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+          conn   = sqlite3.connect(DATABASE_PATH)
+          cursor = conn.cursor()
+          cursor.execute("""
+              CREATE TABLE IF NOT EXISTS stg_blob_files (
+                  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                  source_file TEXT UNIQUE,
+                  message     TEXT,
+                  loaded_at   TEXT DEFAULT (datetime('now'))
+              )
+          """)
+          conn.commit()
+          conn.close()
+          print("Base SQLite prête.")
+
+      def load_blobs():
+          cs     = get_connection_string()
+          client = BlobServiceClient.from_connection_string(cs)
+          blobs  = client.get_container_client(CONTAINER_NAME).list_blobs()
+          conn   = sqlite3.connect(DATABASE_PATH)
+          cursor = conn.cursor()
+          count  = 0
+
+          for blob in blobs:
+              blob_name = blob.name
+              bc        = client.get_blob_client(container=CONTAINER_NAME, blob=blob_name)
+              data      = json.loads(bc.download_blob().readall())
+              message   = data.get("message")
+
+              cursor.execute(
+                  "INSERT OR IGNORE INTO stg_blob_files (source_file, message) VALUES (?, ?)",
+                  (blob_name, message)
+              )
+              if cursor.rowcount > 0:
+                  count += 1
+                  print(f"Chargé : {blob_name}")
+
+          conn.commit()
+          conn.close()
+          print(f"Chargement terminé — {count} nouveaux fichiers.")
+
+      if __name__ == "__main__":
+          create_database()
+          load_blobs()
+
+  # ─────────────────────────────────────────────
+  # DAG Airflow
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/airflow/dags/dataops_pipeline_dag.py
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0644"
+    content: |
+      from datetime import datetime, timedelta
+      from airflow import DAG
+      from airflow.operators.bash import BashOperator
+
+      PROJECT_DIR   = "/opt/airflow/project"
+      DBT_DIR       = f"{PROJECT_DIR}/dataops_dbt"
+      PROFILES_DIR  = f"{PROJECT_DIR}/.dbt"
+
+      default_args = {
+          "owner"           : "dataops",
+          "depends_on_past" : False,
+          "email_on_failure": False,
+          "email_on_retry"  : False,
+          "retries"         : 1,
+          "retry_delay"     : timedelta(minutes=2),
+      }
+
+      with DAG(
+          dag_id          = "dataops_pipeline",
+          description     = "Pipeline DataOps complet : Blob -> SQLite -> dbt run -> dbt test",
+          default_args    = default_args,
+          start_date      = datetime(2026, 1, 1),
+          schedule        = "0 */6 * * *",
+          catchup         = False,
+          max_active_runs = 1,
+          tags            = ["dataops", "dbt", "blob", "sqlite"],
+      ) as dag:
+
+          upload_blob = BashOperator(
+              task_id      = "upload_blob",
+              bash_command = f"cd {PROJECT_DIR} && python3 scripts/upload_blob.py",
+              env={
+                  "AZURE_STORAGE_CONNECTION_STRING": "{{ var.value.azure_storage_connection_string }}"
+              },
+          )
+
+          load_sqlite = BashOperator(
+              task_id      = "load_sqlite",
+              bash_command = f"cd {PROJECT_DIR} && python3 scripts/load_blob_to_sql.py",
+              env={
+                  "AZURE_STORAGE_CONNECTION_STRING": "{{ var.value.azure_storage_connection_string }}"
+              },
+          )
+
+          dbt_run = BashOperator(
+              task_id      = "dbt_run",
+              bash_command = (
+                  f"dbt run "
+                  f"--project-dir {DBT_DIR} "
+                  f"--profiles-dir {PROFILES_DIR}"
+              ),
+          )
+
+          dbt_test = BashOperator(
+              task_id      = "dbt_test",
+              bash_command = (
+                  f"dbt test "
+                  f"--project-dir {DBT_DIR} "
+                  f"--profiles-dir {PROFILES_DIR}"
+              ),
+          )
+
+          upload_blob >> load_sqlite >> dbt_run >> dbt_test
+
+  # ─────────────────────────────────────────────
+  # Modèle dbt : analytics_messages.sql
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/dbt_models/analytics_messages.sql
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0644"
+    content: |
+      SELECT
+          source_file,
+          message
+      FROM stg_blob_files
+      WHERE message IS NOT NULL
+
+  # ─────────────────────────────────────────────
+  # schema.yml dbt
+  # ─────────────────────────────────────────────
+  - path: /home/${admin_username}/dataops-project/dbt_models/schema.yml
+    owner: "${admin_username}:${admin_username}"
+    permissions: "0644"
+    content: |
+      version: 2
+
+      models:
+        - name: analytics_messages
+          description: "Couche analytique — messages extraits des fichiers blob Azure."
+          columns:
+            - name: source_file
+              description: "Chemin du fichier source dans le blob storage Azure."
+              tests:
+                - unique
+                - not_null
+            - name: message
+              description: "Contenu du message extrait du JSON."
+              tests:
+                - not_null
+
+  # ─────────────────────────────────────────────
+  # Script principal de déploiement Airflow
+  # appelé par runcmd après Docker installé
+  # ─────────────────────────────────────────────
+  - path: /opt/deploy_airflow.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      LOGFILE="/var/log/deploy_airflow.log"
+      exec >> "$LOGFILE" 2>&1
+
+      echo "=========================================="
+      echo "$(date) — Démarrage deploy_airflow.sh"
+      echo "=========================================="
+
+      PROJECT_DIR="/home/${admin_username}/dataops-project"
+      AIRFLOW_DIR="$PROJECT_DIR/airflow"
+      AIRFLOW_VERSION="2.9.3"
+      ADMIN_USER="${admin_username}"
+
+      # ── Attendre Docker ──────────────────────
+      echo "$(date) — Attente Docker..."
+      until docker info &>/dev/null; do sleep 3; done
+      echo "$(date) — Docker OK"
+
+      # ── Télécharger docker-compose officiel Airflow ──
+      echo "$(date) — Téléchargement docker-compose Airflow $AIRFLOW_VERSION..."
+      curl -LfO \
+        "https://airflow.apache.org/docs/apache-airflow/$${AIRFLOW_VERSION}/docker-compose.yaml" \
+        --output-dir "$AIRFLOW_DIR"
+
+      # ── Monter le dossier projet dans les conteneurs ──
+      sed -i \
+        '/- \.\/plugins:\/opt\/airflow\/plugins/a\      - \/home\/${admin_username}\/dataops-project:\/opt\/airflow\/project' \
+        "$AIRFLOW_DIR/docker-compose.yaml"
+
+      # ── Installer dbt + azure dans l'env virtuel (hors Docker) ──
+      echo "$(date) — Installation dbt dans venv..."
+      cd "$PROJECT_DIR"
+      python3 -m venv venv
+      source venv/bin/activate
+      pip install --upgrade pip
+      pip install dbt-core dbt-sqlite azure-storage-blob
+
+      # ── Initialiser le projet dbt ──
+      echo "$(date) — Initialisation projet dbt..."
+      echo "sqlite" | dbt init dataops_dbt --profiles-dir "$PROJECT_DIR/.dbt"
+
+      # Remplacer les modèles d'exemple par nos modèles
+      rm -rf "$PROJECT_DIR/dataops_dbt/models/example"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/models"
+      cp "$PROJECT_DIR/dbt_models/analytics_messages.sql" \
+         "$PROJECT_DIR/dataops_dbt/models/"
+      cp "$PROJECT_DIR/dbt_models/schema.yml" \
+         "$PROJECT_DIR/dataops_dbt/models/"
+
+      deactivate
+
+      # ── Corriger les permissions ──
+      chown -R "$ADMIN_USER:$ADMIN_USER" "$PROJECT_DIR"
+
+      # ── Initialiser Airflow ──
+      echo "$(date) — Initialisation base de données Airflow..."
+      cd "$AIRFLOW_DIR"
+      docker compose up airflow-init
+      echo "$(date) — airflow-init terminé"
+
+      # ── Démarrer tous les services Airflow ──
+      echo "$(date) — Démarrage Airflow (docker compose up -d)..."
+      docker compose up -d
+      echo "$(date) — Airflow démarré"
+
+      # ── Attendre que le webserver soit healthy ──
+      echo "$(date) — Attente webserver healthy..."
+      ATTEMPTS=0
+      until docker compose ps | grep "airflow-webserver" | grep -q "healthy"; do
+        sleep 15
+        ATTEMPTS=$((ATTEMPTS + 1))
+        if [ $ATTEMPTS -ge 20 ]; then
+          echo "$(date) — TIMEOUT : webserver non healthy après 5 min, on continue quand même"
+          break
+        fi
+      done
+      echo "$(date) — Webserver prêt"
+
+      # ── Injecter la variable Airflow (connection string Azure) ──
+      echo "$(date) — Injection variable Airflow azure_storage_connection_string..."
+      CONN_STR="${storage_connection_string}"
+
+      docker compose exec -T airflow-webserver \
+        airflow variables set azure_storage_connection_string "$CONN_STR" || true
+
+      # ── Activer et déclencher le DAG ──
+      echo "$(date) — Activation du DAG dataops_pipeline..."
+      docker compose exec -T airflow-scheduler \
+        airflow dags unpause dataops_pipeline || true
+
+      echo "$(date) — Déclenchement initial du DAG..."
+      docker compose exec -T airflow-scheduler \
+        airflow dags trigger dataops_pipeline || true
+
+      echo "=========================================="
+      echo "$(date) — Déploiement TERMINÉ avec succès"
+      echo "Airflow accessible sur http://<IP_VM>:8080"
+      echo "Login : airflow / ${airflow_admin_password}"
+      echo "=========================================="
+
+runcmd:
+  # ── Créer la structure de dossiers ─────────────────────────
+  - mkdir -p /home/${admin_username}/dataops-project/airflow/dags
+  - mkdir -p /home/${admin_username}/dataops-project/airflow/logs
+  - mkdir -p /home/${admin_username}/dataops-project/airflow/plugins
+  - mkdir -p /home/${admin_username}/dataops-project/airflow/config
+  - mkdir -p /home/${admin_username}/dataops-project/database
+  - mkdir -p /home/${admin_username}/dataops-project/scripts
+  - mkdir -p /home/${admin_username}/dataops-project/.dbt
+  - mkdir -p /home/${admin_username}/dataops-project/dbt_models
+
+  # ── Installer Docker ───────────────────────────────────────
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker ${admin_username}
+  - systemctl enable docker
+  - systemctl start docker
+  - apt-get install -y docker-compose-plugin
+
+  # ── Installer Python/dbt système (pour venv) ──────────────
+  - pip3 install --upgrade pip --break-system-packages
+
+  # ── Corriger les permissions initiales ───────────────────
+  - chown -R ${admin_username}:${admin_username} /home/${admin_username}/dataops-project
+
+  # ── Lancer le script de déploiement en arrière-plan ──────
+  # (exécuté en tant que root ; Docker + docker compose disponibles)
+  - bash /opt/deploy_airflow.sh
+
+final_message: |
+  ============================================================
+  VM DataOps TP6 prête après $UPTIME secondes.
+  Script de déploiement Airflow lancé en arrière-plan.
+  Logs : /var/log/deploy_airflow.log
+  Interface web : http://<IP_VM>:8080 (disponible dans ~5-8 min)
+  ============================================================
