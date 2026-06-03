@@ -80,6 +80,8 @@ terraform apply
 
 ```bash
 ssh-keygen -t rsa -b 4096 -C "dataops-tp6-azure" -f ~/.ssh/id_rsa_tp6
+git clone https://github.com/dspitech/DataOps-Airflow-Apache-Terraform-Azure.git
+cd DataOps-Airflow-Apache-Terraform-Azure
 ```
 
 ---
