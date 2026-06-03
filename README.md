@@ -185,6 +185,6 @@ terraform destroy
 |---|---|
 | Port 8080 inaccessible | Vérifier `allowed_ip` dans `terraform.tfvars` |
 | Airflow pas encore disponible | Attendre 5-8 min, vérifier `/var/log/deploy_airflow.log` |
-| DAG en erreur `variable not found` | Vérifier les logs — la variable est injectée automatiquement |
+| DAG en erreur `variable not found` | Vérifier les logs - la variable est injectée automatiquement |
 | `docker: command not found` au login | cloud-init tourne encore, attendre `sudo cloud-init status` |
 | Tout re-déployer sans recréer la VM | `ssh` → `bash /opt/deploy_airflow.sh` |
