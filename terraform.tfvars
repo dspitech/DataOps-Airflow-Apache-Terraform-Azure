@@ -1,7 +1,7 @@
 resource_group_name    = "rg-dataops-tp6"
 location               = "norwayeast"
 vm_name                = "vm-airflow-dataops"
-vm_size                = "Standard_B2s"
+vm_size                = "Standard_B2ms"
 admin_username         = "dataops_admin"
 
 # Chemin vers la clé publique SSH dans le Cloud Shell
