@@ -340,17 +340,40 @@ write_files:
       pip install dbt-core dbt-sqlite azure-storage-blob --quiet
       echo "$(date) — dbt installé : $(dbt --version | head -1)"
 
-      # ── 8. Initialiser le projet dbt ─────────────────────────
-      echo "$(date) — Initialisation projet dbt..."
-      cd "$PROJECT_DIR"
-      echo "sqlite" | dbt init dataops_dbt --profiles-dir "$PROJECT_DIR/.dbt" --no-version-check
-
-      # Remplacer modèles d'exemple par nos modèles
-      rm -rf "$PROJECT_DIR/dataops_dbt/models/example"
+      # ── 8. Créer le projet dbt MANUELLEMENT (sans dbt init) ────
+      # dbt init pose des questions interactives et plante en non-TTY.
+      # On crée la structure à la main.
+      echo "$(date) — Création manuelle du projet dbt..."
       mkdir -p "$PROJECT_DIR/dataops_dbt/models"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/seeds"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/tests"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/macros"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/analyses"
+      mkdir -p "$PROJECT_DIR/dataops_dbt/snapshots"
+
+      # Écrire dbt_project.yml sans heredoc (incompatible YAML)
+      printf '%s\n' \
+        "name: \'dataops_dbt\'" \
+        "version: \'1.0.0\'" \
+        "config-version: 2" \
+        "profile: \'dataops_dbt\'" \
+        "model-paths: [\"models\"]" \
+        "analysis-paths: [\"analyses\"]" \
+        "test-paths: [\"tests\"]" \
+        "seed-paths: [\"seeds\"]" \
+        "macro-paths: [\"macros\"]" \
+        "snapshot-paths: [\"snapshots\"]" \
+        "models:" \
+        "  dataops_dbt:" \
+        "    +materialized: table" \
+        > "$PROJECT_DIR/dataops_dbt/dbt_project.yml" 
+
       cp "$PROJECT_DIR/dbt_models/analytics_messages.sql" "$PROJECT_DIR/dataops_dbt/models/"
       cp "$PROJECT_DIR/dbt_models/schema.yml"             "$PROJECT_DIR/dataops_dbt/models/"
-      echo "$(date) — Projet dbt prêt"
+      echo "$(date) — Projet dbt créé manuellement"
+      dbt debug --project-dir "$PROJECT_DIR/dataops_dbt" --profiles-dir "$PROJECT_DIR/.dbt" --no-version-check \
+        && echo "$(date) — dbt debug OK" \
+        || echo "$(date) — WARNING dbt debug (non bloquant)"
 
       deactivate
 
