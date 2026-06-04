@@ -1,4 +1,4 @@
-# TP 7 — Pipeline DataOps Airflow sur Azure VM — Déploiement 100% automatisé
+# TP 7 - Pipeline DataOps Airflow sur Azure VM - Déploiement 100% automatisé
 
 > **Un seul `terraform apply` suffit.** Infrastructure, Airflow, dbt, DAG, connexion Azure Blob - tout est provisionné et démarré automatiquement.
 
@@ -100,22 +100,22 @@ Le DAG `dataops_pipeline` enchaîne 4 tâches dans l'ordre suivant :
 upload_blob  ──►  load_sqlite  ──►  dbt_run  ──►  dbt_test
 ```
 
-### Tâche 1 — `upload_blob`
+### Tâche 1 - `upload_blob`
 Génère un fichier JSON horodaté (`{"message": "hello azure...", "timestamp": "..."}`) et l'envoie dans Azure Blob Storage sous le chemin partitionné `dataops/year=YYYY/month=MM/day=DD/test_HHMMSS.json`.
 
 **Pourquoi ?** Simule l'arrivée de données brutes dans un data lake.
 
-### Tâche 2 — `load_sqlite`
+### Tâche 2 - `load_sqlite`
 Liste tous les blobs du container `raw`, télécharge leur contenu JSON et insère les nouvelles lignes dans la table `stg_blob_files` de la base SQLite. Utilise `INSERT OR IGNORE` pour l'idempotence.
 
 **Pourquoi ?** Constitue la couche **staging** : données brutes chargées en base locale pour le traitement.
 
-### Tâche 3 — `dbt_run`
+### Tâche 3 - `dbt_run`
 Exécute les modèles dbt. Le modèle `analytics_messages.sql` sélectionne les messages non nuls depuis `stg_blob_files` et les matérialise dans une table analytique propre.
 
 **Pourquoi ?** Constitue la couche **analytique** : données nettoyées et transformées, prêtes pour la consommation.
 
-### Tâche 4 — `dbt_test`
+### Tâche 4 - `dbt_test`
 Exécute les tests de qualité définis dans `schema.yml` : unicité de `source_file`, non-nullité de `source_file` et `message`.
 
 **Pourquoi ?** Garantit la **qualité des données** à chaque exécution. Si un test échoue, Airflow marque la tâche en rouge et alerte.
@@ -170,7 +170,7 @@ az --version && terraform --version
 
 ## Déploiement
 
-### Étape 1 — Récupérer votre IP publique
+### Étape 1 - Récupérer votre IP publique
 
 Cette IP sera autorisée dans le NSG pour SSH et Airflow.
 
@@ -182,7 +182,7 @@ curl -s https://api.ipify.org
 (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content
 ```
 
-### Étape 2 — Configurer terraform.tfvars
+### Étape 2 - Configurer terraform.tfvars
 
 Ouvrir `terraform.tfvars` et renseigner les deux valeurs obligatoires :
 
@@ -196,7 +196,7 @@ storage_account_name = "sadataopstp7votrenom"
 
 > **Attention :** `storage_account_name` doit être unique dans tout Azure. Si le déploiement échoue avec une erreur "already taken", changez le suffixe.
 
-### Étape 3 — Déployer
+### Étape 3 - Déployer
 
 ```bash
 terraform init && terraform fmt && terraform validate && terraform plan && terraform apply -auto-approve
@@ -204,7 +204,7 @@ terraform init && terraform fmt && terraform validate && terraform plan && terra
 
 Durée estimée : **2-3 minutes** pour le provisionnement Azure. Le déploiement complet (Airflow + dbt) se termine en **8-12 minutes** en arrière-plan sur la VM.
 
-### Étape 4 — Accéder à Airflow
+### Étape 4 - Accéder à Airflow
 
 À la fin de `terraform apply`, notez les outputs affichés :
 
