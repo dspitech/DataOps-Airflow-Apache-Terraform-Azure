@@ -170,7 +170,7 @@ az --version && terraform --version
 
 ## Déploiement
 
-### Étape 1 - Récupérer votre IP publique
+### Étape 1 - Récupérer votre IP publique (Machine locale)
 
 Cette IP sera autorisée dans le NSG pour SSH et Airflow.
 
