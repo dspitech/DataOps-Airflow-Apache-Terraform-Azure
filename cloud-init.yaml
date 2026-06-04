@@ -261,6 +261,24 @@ write_files:
               tests:
                 - not_null
 
+  - path: /opt/dataops-staging/dbt_project.yml
+    owner: root:root
+    permissions: "0644"
+    content: |
+      name: dataops_dbt
+      version: '1.0.0'
+      config-version: 2
+      profile: dataops_dbt
+      model-paths: ["models"]
+      analysis-paths: ["analyses"]
+      test-paths: ["tests"]
+      seed-paths: ["seeds"]
+      macro-paths: ["macros"]
+      snapshot-paths: ["snapshots"]
+      models:
+        dataops_dbt:
+          +materialized: table
+
   # ─────────────────────────────────────────────
   # Script de déploiement Airflow (root:root, pas de problème)
   # ─────────────────────────────────────────────
@@ -348,22 +366,9 @@ write_files:
       mkdir -p "$PROJECT_DIR/dataops_dbt/analyses"
       mkdir -p "$PROJECT_DIR/dataops_dbt/snapshots"
 
-      # Écrire dbt_project.yml sans heredoc (incompatible YAML)
-      printf '%s\n' \
-        "name: \'dataops_dbt\'" \
-        "version: \'1.0.0\'" \
-        "config-version: 2" \
-        "profile: \'dataops_dbt\'" \
-        "model-paths: [\"models\"]" \
-        "analysis-paths: [\"analyses\"]" \
-        "test-paths: [\"tests\"]" \
-        "seed-paths: [\"seeds\"]" \
-        "macro-paths: [\"macros\"]" \
-        "snapshot-paths: [\"snapshots\"]" \
-        "models:" \
-        "  dataops_dbt:" \
-        "    +materialized: table" \
-        > "$PROJECT_DIR/dataops_dbt/dbt_project.yml" 
+      # Copier dbt_project.yml depuis le staging (écrit proprement par write_files)
+      cp /opt/dataops-staging/dbt_project.yml "$PROJECT_DIR/dataops_dbt/dbt_project.yml"
+      echo "$(date) — dbt_project.yml copié depuis staging" 
 
       cp "$PROJECT_DIR/dbt_models/analytics_messages.sql" "$PROJECT_DIR/dataops_dbt/models/"
       cp "$PROJECT_DIR/dbt_models/schema.yml"             "$PROJECT_DIR/dataops_dbt/models/"
