@@ -321,13 +321,13 @@ write_files:
       # ── 5. Télécharger docker-compose officiel Airflow ───────
       echo "$(date) — Téléchargement docker-compose Airflow $AIRFLOW_VERSION..."
       curl -Lf \
-        "https://airflow.apache.org/docs/apache-airflow/${AIRFLOW_VERSION}/docker-compose.yaml" \
+        "https://airflow.apache.org/docs/apache-airflow/$${AIRFLOW_VERSION}/docker-compose.yaml" \
         -o "$AIRFLOW_DIR/docker-compose.yaml"
       echo "$(date) — docker-compose.yaml téléchargé"
 
       # ── 6. Monter le dossier projet dans les conteneurs ──────
       sed -i \
-        "/- \.\/plugins:\/opt\/airflow\/plugins/a\\      - ${PROJECT_DIR}:/opt/airflow/project" \
+        "/- \.\/plugins:\/opt\/airflow\/plugins/a\\      - $${PROJECT_DIR}:/opt/airflow/project" \
         "$AIRFLOW_DIR/docker-compose.yaml"
       echo "$(date) — Volume projet ajouté dans docker-compose.yaml"
 
