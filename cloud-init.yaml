@@ -1,9 +1,6 @@
 #cloud-config
 # ============================================================
 # cloud-init FULL AUTO — TP6 DataOps
-# CORRECTIF : write_files écrit TOUT sous /opt/dataops-staging/
-# (root:root) car l'utilisateur dataops_admin n'existe pas encore.
-# runcmd crée la structure finale et corrige les permissions.
 # ============================================================
 
 package_update: true
