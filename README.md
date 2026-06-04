@@ -108,9 +108,7 @@ storage_account_name = "sadataopstp6uniq"  # unique global, max 24 chars
 ### 3. Déployer
 
 ```bash
-terraform init
-terraform plan
-terraform apply
+terraform init && terraform fmt && terraform validate && terraform plan && terraform apply -auto-approve
 ```
 
 À la fin, notez les outputs :
